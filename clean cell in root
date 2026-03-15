@@ -1,0 +1,27 @@
+function onEdit(e) {
+  if (!e || !e.range) return;
+
+  const range = e.range;
+  const sheet = range.getSheet();
+  const row = range.getRow();
+  const col = range.getColumn();
+
+  // Only run for single-cell edits in column B, skip header row
+  if (col !== 2 || row === 1) return;
+  if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return;
+
+  const raw = String(range.getValue() || "");
+  const cleaned = cleanWords_(raw);
+
+  if (raw !== cleaned) {
+    range.setValue(cleaned);
+  }
+}
+
+function cleanWords_(text) {
+  const matches = String(text || "")
+    .toLowerCase()
+    .match(/[a-z0-9]+/g);
+
+  return matches ? [...new Set(matches)].join(",") : "";
+}
