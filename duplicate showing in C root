@@ -1,0 +1,48 @@
+function onEdit(e) {
+
+  const sheet = e.range.getSheet();
+  const row = e.range.getRow();
+  const col = e.range.getColumn();
+
+  if (col !== 2 || row === 1) return; // only column B
+
+  const lastRow = sheet.getLastRow();
+
+  const data = sheet.getRange(2,2,lastRow-1,1).getValues();
+
+  // convert each row into word arrays
+  const rowsWords = data.map(r => {
+    if(!r[0]) return [];
+    return r[0]
+      .toLowerCase()
+      .match(/[a-z0-9]+/g) || [];
+  });
+
+  // clear column C
+  sheet.getRange(2,3,lastRow-1,1).clearContent();
+
+  for(let i=0;i<rowsWords.length;i++){
+
+    let matches = [];
+
+    for(let j=0;j<rowsWords.length;j++){
+
+      if(i===j) continue;
+
+      const shared = rowsWords[i].filter(word =>
+        rowsWords[j].includes(word)
+      );
+
+      if(shared.length > 0){
+        matches.push("Row " + (j+2));
+      }
+
+    }
+
+    if(matches.length > 0){
+      sheet.getRange(i+2,3).setValue(matches.join(", "));
+    }
+
+  }
+
+}
