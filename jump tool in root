@@ -1,0 +1,44 @@
+function onOpen() {
+
+  // Get spreadsheet UI
+  var ui = SpreadsheetApp.getUi();
+
+  // Create a new menu in the top bar
+  ui.createMenu("🔎 Jump Tools")
+    .addItem("Go to Letter", "goToLetterRow")
+    .addToUi();
+}
+
+
+function goToLetterRow() {
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var ui = SpreadsheetApp.getUi();
+
+  // Ask user for the letter
+  var response = ui.prompt(
+    "Jump to letter",
+    "Enter the letter you want to find in Column A:",
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (response.getSelectedButton() != ui.Button.OK) return;
+
+  var letter = response.getResponseText().toUpperCase();
+
+  var data = sheet.getRange("A:A").getValues();
+
+  for (var i = 0; i < data.length; i++) {
+
+    var value = String(data[i][0]).toUpperCase();
+
+    if (value.startsWith(letter)) {
+
+      sheet.setActiveRange(sheet.getRange(i + 1, 1));
+      return;
+
+    }
+  }
+
+  ui.alert("No row found starting with: " + letter);
+}
