@@ -1,0 +1,722 @@
+const CFG = {
+  TASKS_SHEET: 'Tasks',
+  ARCHIVE_SHEET: 'Archive',
+  SETTINGS_SHEET: 'Settings',
+  HEADER_ROW: 1,
+
+  STATUS_UNDONE: 'Undone',
+  STATUS_DONE: 'Done',
+
+  PRIORITIES: ['Low', 'Medium', 'High', 'Urgent'],
+  STATUSES: ['Undone', 'Done']
+};
+
+const COL = {
+  ID: 1,             // A
+  TASK: 2,           // B
+  CATEGORY: 3,       // C
+  OWNER_EMAIL: 4,    // D
+  DUE_DATE: 5,       // E
+  PRIORITY: 6,       // F
+  STATUS: 7,         // G
+  REMINDER_SENT: 8,  // H
+  LAST_REMINDER: 9,  // I
+  NOTES: 10,         // J
+  CREATED_AT: 11,    // K
+  COMPLETED_AT: 12   // L
+};
+
+/**
+ * Opens custom menu when spreadsheet is opened.
+ * This does NOT run on every edit.
+ */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Task Tools')
+    .addItem('1. Setup System', 'setupSystem')
+    .addItem('2. Add IDs / Created At to Existing Tasks', 'fillMissingTaskMetadata')
+    .addItem('3. Send Reminder Now', 'sendDailySummaryEmail')
+    .addItem('4. Archive Completed Tasks', 'archiveAllCompletedTasks')
+    .addItem('5. Create Daily Trigger', 'createDailyTrigger')
+    .addItem('6. Delete All Triggers', 'deleteAllProjectTriggers')
+    .addItem('7. Apply Formatting', 'setupConditionalFormatting')
+    .addToUi();
+}
+
+/**
+ * Creates sheets, headers, dropdowns, and formatting.
+ */
+function setupSystem() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const tasks = getOrCreateSheet_(ss, CFG.TASKS_SHEET);
+  const archive = getOrCreateSheet_(ss, CFG.ARCHIVE_SHEET);
+  const settings = getOrCreateSheet_(ss, CFG.SETTINGS_SHEET);
+
+  setupTasksSheet_(tasks);
+  setupArchiveSheet_(archive);
+  setupSettingsSheet_(settings);
+  setupDropdowns_(tasks);
+  setupConditionalFormatting();
+
+  SpreadsheetApp.getUi().alert('Task system setup complete.');
+}
+
+/**
+ * Creates or gets a sheet by name.
+ */
+function getOrCreateSheet_(ss, name) {
+  return ss.getSheetByName(name) || ss.insertSheet(name);
+}
+
+/**
+ * Sets up Tasks sheet headers.
+ */
+function setupTasksSheet_(sheet) {
+  const headers = [[
+    'Task ID',
+    'Task',
+    'Category',
+    'Owner Email',
+    'Due Date',
+    'Priority',
+    'Status',
+    'Reminder Sent',
+    'Last Reminder',
+    'Notes',
+    'Created At',
+    'Completed At'
+  ]];
+
+  sheet.clear();
+  sheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers[0].length);
+}
+
+/**
+ * Sets up Archive sheet headers.
+ */
+function setupArchiveSheet_(sheet) {
+  const headers = [[
+    'Task ID',
+    'Task',
+    'Category',
+    'Owner Email',
+    'Due Date',
+    'Priority',
+    'Status',
+    'Reminder Sent',
+    'Last Reminder',
+    'Notes',
+    'Created At',
+    'Completed At'
+  ]];
+
+  sheet.clear();
+  sheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers[0].length);
+}
+
+/**
+ * Sets up Settings sheet.
+ */
+function setupSettingsSheet_(sheet) {
+  const values = [
+    ['Default Reminder Email', 'your@email.com'],
+    ['Daily Reminder Hour', '8']
+  ];
+
+  sheet.clear();
+  sheet.getRange(1, 1, values.length, 2).setValues(values);
+  sheet.autoResizeColumns(1, 2);
+}
+
+/**
+ * Applies dropdown validation to Priority and Status columns.
+ */
+function setupDropdowns_(sheet) {
+  const maxRows = Math.max(sheet.getMaxRows(), 1000);
+
+  const priorityRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(CFG.PRIORITIES, true)
+    .setAllowInvalid(false)
+    .build();
+
+  const statusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(CFG.STATUSES, true)
+    .setAllowInvalid(false)
+    .build();
+
+  sheet.getRange(2, COL.PRIORITY, maxRows - 1).setDataValidation(priorityRule);
+  sheet.getRange(2, COL.STATUS, maxRows - 1).setDataValidation(statusRule);
+}
+
+/**
+ * Applies conditional formatting:
+ * - Urgent + Undone = red
+ * - Overdue + Undone = yellow
+ * - Due today + Undone = light green
+ */
+function setupConditionalFormatting() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CFG.TASKS_SHEET);
+  if (!sheet) return;
+
+  const range = sheet.getRange('A2:L1000');
+  const rules = [];
+
+  rules.push(
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=AND($F2="Urgent",$G2="Undone")')
+      .setBackground('#f4cccc')
+      .setBold(true)
+      .setRanges([range])
+      .build()
+  );
+
+  rules.push(
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=AND($E2<>"",$E2<TODAY(),$G2="Undone")')
+      .setBackground('#fff2cc')
+      .setRanges([range])
+      .build()
+  );
+
+  rules.push(
+    SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=AND($E2=TODAY(),$G2="Undone")')
+      .setBackground('#d9ead3')
+      .setRanges([range])
+      .build()
+  );
+
+  sheet.setConditionalFormatRules(rules);
+}
+
+/**
+ * Reads Settings sheet.
+ */
+function getSettings_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CFG.SETTINGS_SHEET);
+  if (!sheet) throw new Error('Settings sheet not found.');
+
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), 2).getValues();
+  const map = {};
+
+  values.forEach(([key, value]) => {
+    if (key) map[String(key).trim()] = value;
+  });
+
+  return {
+    defaultEmail: String(map['Default Reminder Email'] || '').trim(),
+    dailyHour: Number(map['Daily Reminder Hour'] || 8)
+  };
+}
+
+/**
+ * Adds Task ID and Created At to existing rows that have a task but are missing those fields.
+ * Run this manually from the menu.
+ */
+function fillMissingTaskMetadata() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CFG.TASKS_SHEET);
+  if (!sheet) throw new Error('Tasks sheet not found.');
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const data = sheet.getRange(2, 1, lastRow - 1, COL.COMPLETED_AT).getValues();
+  const now = new Date();
+
+  for (let i = 0; i < data.length; i++) {
+    const rowNumber = i + 2;
+    const row = data[i];
+
+    const task = row[COL.TASK - 1];
+    const id = row[COL.ID - 1];
+    const status = row[COL.STATUS - 1];
+    const createdAt = row[COL.CREATED_AT - 1];
+
+    if (!task) continue;
+
+    if (!id) {
+      sheet.getRange(rowNumber, COL.ID).setValue(createTaskId_());
+    }
+
+    if (!createdAt) {
+      sheet.getRange(rowNumber, COL.CREATED_AT).setValue(now);
+    }
+
+    if (!status) {
+      sheet.getRange(rowNumber, COL.STATUS).setValue(CFG.STATUS_UNDONE);
+    }
+  }
+
+  SpreadsheetApp.getUi().alert('Missing Task ID / Created At / Status filled.');
+}
+
+/**
+ * Creates a unique task ID.
+ */
+function createTaskId_() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+}
+
+/**
+ * Sends one daily summary email with all undone tasks.
+ * This runs only when:
+ * - you click it manually, or
+ * - the daily trigger runs
+ */
+function sendDailySummaryEmail() {
+  const settings = getSettings_();
+  const email = settings.defaultEmail;
+
+  if (!email) {
+    throw new Error('Default Reminder Email is blank in Settings sheet.');
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CFG.TASKS_SHEET);
+  if (!sheet) throw new Error('Tasks sheet not found.');
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const data = sheet.getRange(2, 1, lastRow - 1, COL.COMPLETED_AT).getValues();
+
+  const urgent = [];
+  const high = [];
+  const others = [];
+  const now = new Date();
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    const rowNumber = i + 2;
+
+    const task = row[COL.TASK - 1];
+    const category = row[COL.CATEGORY - 1];
+    const ownerEmail = row[COL.OWNER_EMAIL - 1];
+    const dueDate = row[COL.DUE_DATE - 1];
+    const priority = row[COL.PRIORITY - 1];
+    const status = row[COL.STATUS - 1];
+    const notes = row[COL.NOTES - 1];
+
+    if (!task || status !== CFG.STATUS_UNDONE) continue;
+
+    const taskLine = buildTaskLine_(task, category, ownerEmail, dueDate, priority, notes);
+
+    if (priority === 'Urgent') {
+      urgent.push(taskLine);
+    } else if (priority === 'High') {
+      high.push(taskLine);
+    } else {
+      others.push(taskLine);
+    }
+
+    sheet.getRange(rowNumber, COL.REMINDER_SENT).setValue('Yes');
+    sheet.getRange(rowNumber, COL.LAST_REMINDER).setValue(now);
+  }
+
+  if (urgent.length === 0 && high.length === 0 && others.length === 0) {
+    return;
+  }
+
+  const subject = `Task Summary: ${urgent.length} urgent, ${urgent.length + high.length + others.length} total undone`;
+  const body = buildEmailBody_(urgent, high, others);
+
+  const remainingQuota = MailApp.getRemainingDailyQuota();
+  if (remainingQuota < 1) {
+    throw new Error('No email quota remaining today.');
+  }
+
+  MailApp.sendEmail(email, subject, body);
+}
+
+/**
+ * Builds one task line for email body.
+ */
+function buildTaskLine_(task, category, ownerEmail, dueDate, priority, notes) {
+  const parts = [];
+
+  parts.push(`Task: ${task}`);
+
+  if (dueDate) {
+    parts.push(`Due: ${formatDate_(dueDate)}`);
+  }
+
+  if (priority) {
+    parts.push(`Priority: ${priority}`);
+  }
+
+  if (category) {
+    parts.push(`Category: ${category}`);
+  }
+
+  if (ownerEmail) {
+    parts.push(`Owner: ${ownerEmail}`);
+  }
+
+  if (notes) {
+    parts.push(`Notes: ${notes}`);
+  }
+
+  return `- ${parts.join(' | ')}`;
+}
+
+/**
+ * Builds plain text email body.
+ */
+function buildEmailBody_(urgent, high, others) {
+  let body = 'Undone Task Reminder\n\n';
+
+  if (urgent.length) {
+    body += '🚨 URGENT TASKS\n';
+    body += urgent.join('\n');
+    body += '\n\n';
+  }
+
+  if (high.length) {
+    body += '⚠️ HIGH PRIORITY TASKS\n';
+    body += high.join('\n');
+    body += '\n\n';
+  }
+
+  if (others.length) {
+    body += '📌 OTHER TASKS\n';
+    body += others.join('\n');
+    body += '\n';
+  }
+
+  return body;
+}
+
+/**
+ * Moves all rows with Status = Done from Tasks to Archive.
+ * This runs only when you click it manually.
+ */
+function archiveAllCompletedTasks() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tasks = ss.getSheetByName(CFG.TASKS_SHEET);
+  const archive = ss.getSheetByName(CFG.ARCHIVE_SHEET);
+
+  if (!tasks) throw new Error('Tasks sheet not found.');
+  if (!archive) throw new Error('Archive sheet not found.');
+
+  const lastRow = tasks.getLastRow();
+  const lastCol = tasks.getLastColumn();
+
+  if (lastRow < 2) {
+    SpreadsheetApp.getUi().alert('No task rows found.');
+    return;
+  }
+
+  const data = tasks.getRange(1, 1, lastRow, lastCol).getValues();
+  const header = data[0];
+
+  const rowsToKeep = [header];
+  const rowsToArchive = [];
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const status = row[COL.STATUS - 1];
+
+    if (status === CFG.STATUS_DONE) {
+      if (!row[COL.COMPLETED_AT - 1]) {
+        row[COL.COMPLETED_AT - 1] = new Date();
+      }
+      rowsToArchive.push(row);
+    } else {
+      rowsToKeep.push(row);
+    }
+  }
+
+  if (rowsToArchive.length > 0) {
+    archive.getRange(
+      archive.getLastRow() + 1,
+      1,
+      rowsToArchive.length,
+      rowsToArchive[0].length
+    ).setValues(rowsToArchive);
+  }
+
+  tasks.clearContents();
+  tasks.getRange(1, 1, rowsToKeep.length, rowsToKeep[0].length).setValues(rowsToKeep);
+
+  setupDropdowns_(tasks);
+  setupConditionalFormatting();
+
+  SpreadsheetApp.getUi().alert(`${rowsToArchive.length} completed task(s) archived.`);
+}
+
+/**
+ * Creates a daily time-driven trigger.
+ * Deletes old trigger for same function first.
+ */
+function createDailyTrigger() {
+  const settings = getSettings_();
+  const hour = settings.dailyHour || 8;
+
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'sendDailySummaryEmail') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  ScriptApp.newTrigger('sendDailySummaryEmail')
+    .timeBased()
+    .everyDays(1)
+    .atHour(hour)
+    .create();
+
+  SpreadsheetApp.getUi().alert(`Daily trigger created at about ${hour}:00.`);
+}
+
+/**
+ * Deletes all project triggers.
+ */
+function deleteAllProjectTriggers() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  SpreadsheetApp.getUi().alert('All project triggers deleted.');
+}
+
+/**
+ * Formats date for email.
+ */
+function formatDate_(value) {
+  if (!(value instanceof Date)) return String(value || '');
+  return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+/////////////////////////////////////////////
+/////////////////////////////////////////////
+//CODE USING MEMORY, LESS SERVICE CALLS
+const CFG = {
+  TASKS_SHEET: 'Tasks',
+  ARCHIVE_SHEET: 'Archive',
+  SETTINGS_SHEET: 'Settings',
+
+  STATUS_UNDONE: 'Undone',
+  STATUS_DONE: 'Done'
+};
+
+const COL = {
+  ID: 1,
+  TASK: 2,
+  CATEGORY: 3,
+  OWNER_EMAIL: 4,
+  DUE_DATE: 5,
+  PRIORITY: 6,
+  STATUS: 7,
+  REMINDER_SENT: 8,
+  LAST_REMINDER: 9,
+  NOTES: 10,
+  CREATED_AT: 11,
+  COMPLETED_AT: 12
+};
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Task Tools')
+    .addItem('Setup System', 'setupSystem')
+    .addItem('Fill Missing Metadata', 'fillMissingTaskMetadata')
+    .addItem('Send Reminder Now', 'sendDailySummaryEmail')
+    .addItem('Archive Completed Tasks', 'archiveAllCompletedTasks')
+    .addItem('Create Daily Trigger', 'createDailyTrigger')
+    .addToUi();
+}
+
+function setupSystem() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const tasks = getOrCreateSheet(ss, CFG.TASKS_SHEET);
+  const archive = getOrCreateSheet(ss, CFG.ARCHIVE_SHEET);
+  const settings = getOrCreateSheet(ss, CFG.SETTINGS_SHEET);
+
+  const headers = [[
+    'Task ID','Task','Category','Owner Email','Due Date',
+    'Priority','Status','Reminder Sent','Last Reminder',
+    'Notes','Created At','Completed At'
+  ]];
+
+  tasks.clear();
+  tasks.getRange(1,1,1,headers[0].length).setValues(headers);
+
+  archive.clear();
+  archive.getRange(1,1,1,headers[0].length).setValues(headers);
+
+  settings.clear();
+  settings.getRange(1,1,2,2).setValues([
+    ['Default Reminder Email','your@email.com'],
+    ['Daily Reminder Hour','8']
+  ]);
+}
+
+function getOrCreateSheet(ss, name){
+  return ss.getSheetByName(name) || ss.insertSheet(name);
+}
+
+function getSettings_(){
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.SETTINGS_SHEET);
+  const values = sheet.getRange(1,1,sheet.getLastRow(),2).getValues();
+  const map = {};
+  values.forEach(r => map[r[0]] = r[1]);
+
+  return {
+    email: String(map['Default Reminder Email']).trim(),
+    hour: Number(map['Daily Reminder Hour']) || 8
+  };
+}
+
+function fillMissingTaskMetadata(){
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.TASKS_SHEET);
+  const data = sheet.getRange(2,1,sheet.getLastRow()-1,COL.COMPLETED_AT).getValues();
+
+  const now = new Date();
+
+  for(let i=0;i<data.length;i++){
+    const row = data[i];
+    const r = i+2;
+
+    if(row[COL.TASK-1] && !row[COL.ID-1]){
+      sheet.getRange(r,COL.ID).setValue(createId());
+    }
+    if(row[COL.TASK-1] && !row[COL.CREATED_AT-1]){
+      sheet.getRange(r,COL.CREATED_AT).setValue(now);
+    }
+    if(row[COL.TASK-1] && !row[COL.STATUS-1]){
+      sheet.getRange(r,COL.STATUS).setValue('Undone');
+    }
+  }
+}
+
+function createId(){
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(),'yyyyMMdd-HHmmss');
+}
+
+/**
+ * 🚀 OPTIMIZED EMAIL FUNCTION (BATCH VERSION)
+ */
+function sendDailySummaryEmail() {
+  const settings = getSettings_();
+  const emails = settings.email.split(',').map(e=>e.trim());
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.TASKS_SHEET);
+  const data = sheet.getRange(2,1,sheet.getLastRow()-1,COL.COMPLETED_AT).getValues();
+
+  const urgent=[], high=[], others=[];
+  const reminderSentValues=[];
+  const lastReminderValues=[];
+
+  const now = new Date();
+  let hasTasks=false;
+
+  for(let i=0;i<data.length;i++){
+    const row=data[i];
+
+    const task=row[COL.TASK-1];
+    const status=row[COL.STATUS-1];
+    const priority=row[COL.PRIORITY-1];
+
+    let sent=row[COL.REMINDER_SENT-1];
+    let last=row[COL.LAST_REMINDER-1];
+
+    if(task && status===CFG.STATUS_UNDONE){
+      hasTasks=true;
+
+      const line=`- ${task} | ${priority || ''}`;
+
+      if(priority==='Urgent') urgent.push(line);
+      else if(priority==='High') high.push(line);
+      else others.push(line);
+
+      sent='Yes';
+      last=now;
+    }
+
+    reminderSentValues.push([sent]);
+    lastReminderValues.push([last]);
+  }
+
+  if(!hasTasks) return;
+
+  const body =
+`TASK REMINDER
+
+🚨 URGENT
+${urgent.join('\n')}
+
+⚠️ HIGH
+${high.join('\n')}
+
+📌 OTHERS
+${others.join('\n')}
+`;
+
+  // ✅ ONLY 2 WRITES
+  sheet.getRange(2,COL.REMINDER_SENT,reminderSentValues.length,1)
+    .setValues(reminderSentValues);
+
+  sheet.getRange(2,COL.LAST_REMINDER,lastReminderValues.length,1)
+    .setValues(lastReminderValues);
+
+  MailApp.sendEmail(emails.join(','),'Daily Tasks',body);
+}
+
+/**
+ * Archive (already efficient)
+ */
+function archiveAllCompletedTasks(){
+  const ss=SpreadsheetApp.getActiveSpreadsheet();
+  const tasks=ss.getSheetByName(CFG.TASKS_SHEET);
+  const archive=ss.getSheetByName(CFG.ARCHIVE_SHEET);
+
+  const data=tasks.getDataRange().getValues();
+  const header=data[0];
+
+  const keep=[header];
+  const move=[];
+
+  for(let i=1;i<data.length;i++){
+    const row=data[i];
+
+    if(row[COL.STATUS-1]==='Done'){
+      row[COL.COMPLETED_AT-1]=new Date();
+      move.push(row);
+    }else{
+      keep.push(row);
+    }
+  }
+
+  if(move.length){
+    archive.getRange(archive.getLastRow()+1,1,move.length,move[0].length)
+      .setValues(move);
+  }
+
+  tasks.clear();
+  tasks.getRange(1,1,keep.length,keep[0].length).setValues(keep);
+}
+
+/**
+ * Create daily trigger
+ */
+function createDailyTrigger(){
+  const triggers=ScriptApp.getProjectTriggers();
+  triggers.forEach(t=>{
+    if(t.getHandlerFunction()==='sendDailySummaryEmail'){
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+
+  const settings=getSettings_();
+
+  ScriptApp.newTrigger('sendDailySummaryEmail')
+    .timeBased()
+    .everyDays(1)
+    .atHour(settings.hour)
+    .create();
+}
